@@ -16,7 +16,17 @@
         "$path": "src/shared"
       },
       "Remotes": {
-        "$className": "Folder"
+        "$className": "Folder",
+        "MineNode": { "$className": "RemoteEvent" },
+        "InventoryUpdated": { "$className": "RemoteEvent" },
+        "MiningFeedback": { "$className": "RemoteEvent" },
+        "CurrencyUpdated": { "$className": "RemoteEvent" },
+        "RequestTeleport": { "$className": "RemoteEvent" },
+        "OpenPanel": { "$className": "RemoteEvent" },
+        "RequestSell": { "$className": "RemoteEvent" },
+        "SellResult": { "$className": "RemoteEvent" },
+        "RequestBuy": { "$className": "RemoteEvent" },
+        "BuyResult": { "$className": "RemoteEvent" }
       }
     },
 
