@@ -57,8 +57,7 @@ local function sellOne(player, oreId, window)
 		return 0, 0
 	end
 
-	local price = Pricing.GetPrice(oreId, window)
-	return taken, taken * price
+	return taken, Pricing.ValueOf(oreId, taken, window)
 end
 
 local function onRequestSell(player, oreId)
@@ -67,7 +66,7 @@ local function onRequestSell(player, oreId)
 	end
 
 	local window = Pricing.GetWindow()
-	local totalUnits = 0
+	local totalMass = 0
 	local totalValue = 0
 	local lines = {}
 
@@ -79,11 +78,11 @@ local function onRequestSell(player, oreId)
 		end
 
 		for _, id in ipairs(ids) do
-			local units, value = sellOne(player, id, window)
-			if units > 0 then
-				totalUnits = totalUnits + units
+			local mass, value = sellOne(player, id, window)
+			if mass > 0 then
+				totalMass = totalMass + mass
 				totalValue = totalValue + value
-				table.insert(lines, { OreId = id, Units = units, Value = value })
+				table.insert(lines, { OreId = id, Mass = mass, Value = value })
 			end
 		end
 	else
@@ -91,12 +90,12 @@ local function onRequestSell(player, oreId)
 			return
 		end
 
-		local units, value = sellOne(player, oreId, window)
-		totalUnits = units
+		local mass, value = sellOne(player, oreId, window)
+		totalMass = mass
 		totalValue = value
 
-		if units > 0 then
-			table.insert(lines, { OreId = oreId, Units = units, Value = value })
+		if mass > 0 then
+			table.insert(lines, { OreId = oreId, Mass = mass, Value = value })
 		end
 	end
 
@@ -105,7 +104,7 @@ local function onRequestSell(player, oreId)
 	end
 
 	sellResult:FireClient(player, {
-		Units = totalUnits,
+		Mass = totalMass,
 		Value = totalValue,
 		Lines = lines,
 	})

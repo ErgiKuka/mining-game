@@ -14,6 +14,8 @@ local Panel = require(UI.Panel)
 local Hud = require(UI.Hud)
 local BackpackPanel = require(UI.BackpackPanel)
 local MarketPanel = require(UI.MarketPanel)
+local DepthMeter = require(UI.DepthMeter)
+local NoticePanel = require(UI.NoticePanel)
 local ShopPanel = require(UI.ShopPanel)
 
 local player = Players.LocalPlayer
@@ -29,11 +31,18 @@ local requestSell = remotes:WaitForChild("RequestSell")
 local sellResult = remotes:WaitForChild("SellResult")
 local requestBuy = remotes:WaitForChild("RequestBuy")
 local buyResult = remotes:WaitForChild("BuyResult")
+local deathFeedback = remotes:WaitForChild("DeathFeedback")
+local cargoStatus = remotes:WaitForChild("CargoStatus")
+local requestNotice = remotes:WaitForChild("RequestNotice")
+local showNotice = remotes:WaitForChild("ShowNotice")
+local requestRespawn = remotes:WaitForChild("RequestRespawn")
 
 Hud.Build(playerGui)
 BackpackPanel.Build(playerGui)
 MarketPanel.Build(playerGui)
 ShopPanel.Build(playerGui)
+DepthMeter.Build(playerGui)
+NoticePanel.Build(playerGui)
 
 Hud.OnButton("Backpack", function()
 	BackpackPanel.Toggle()
@@ -58,6 +67,7 @@ inventoryUpdated.OnClientEvent:Connect(function(payload)
 
 	if payload.GearId then
 		ShopPanel.SetGear(payload.GearId)
+		DepthMeter.SetGear(payload.GearId)
 	end
 end)
 
@@ -72,7 +82,7 @@ miningFeedback.OnClientEvent:Connect(function(payload)
 		return
 	end
 
-	Hud.OreToast(payload.OreId, payload.Units, payload.Bonus)
+	Hud.OreToast(payload.OreId, payload.Mass, payload.Final)
 end)
 
 openPanel.OnClientEvent:Connect(function(which)
@@ -85,7 +95,7 @@ end)
 
 sellResult.OnClientEvent:Connect(function(payload)
 	if payload.Value and payload.Value > 0 then
-		Hud.Toast("Sold " .. tostring(payload.Units) .. " ore for $" .. tostring(payload.Value), Theme.Color.Accent)
+		Hud.Toast(string.format("Sold %.1f kg for $%d", payload.Mass or 0, payload.Value), Theme.Color.Accent)
 	else
 		Hud.Toast("Nothing to sell", Theme.Color.TextMuted)
 	end
@@ -99,10 +109,32 @@ buyResult.OnClientEvent:Connect(function(payload)
 	end
 end)
 
--- Cheap poll rather than a per-frame check; location only gates button state.
+cargoStatus.OnClientEvent:Connect(function(payload)
+	DepthMeter.SetCargo(payload)
+end)
+
+NoticePanel.OnRespawn(function()
+	requestRespawn:FireServer()
+end)
+
+deathFeedback.OnClientEvent:Connect(function(payload)
+	NoticePanel.ShowDeath(payload)
+end)
+
+showNotice.OnClientEvent:Connect(function(payload)
+	NoticePanel.ShowNotice(payload)
+end)
+
+-- Ask only once the UI exists, rather than having the server fire on load and
+-- race this script's own startup.
+requestNotice:FireServer()
+
+-- Cheap poll rather than a per-frame check; neither the location gate nor the
+-- depth readout needs frame accuracy.
 task.spawn(function()
 	while true do
 		Hud.UpdateLocation()
-		task.wait(0.5)
+		DepthMeter.Update()
+		task.wait(0.25)
 	end
 end)

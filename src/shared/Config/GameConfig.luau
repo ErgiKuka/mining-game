@@ -56,6 +56,40 @@ GameConfig.Surface = {
 	MountainCount = 26,
 }
 
+-- Depth hazard. Damage is a pure function of depth below Surface.Y, so these
+-- numbers are the whole tuning surface - no per-tier or per-zone values.
+--
+-- Reference points with the current curve (resistance 1.0, 100 health):
+--   Tier 1  (depth  90)  no damage
+--   Tier 2  (depth 250)  ~1.29 dps -> ~77s
+--   Tier 3  (depth 430)  ~4.29 dps -> ~23s
+-- Gear resistance multiplies that: Tungsten (0.35) survives ~67s at tier 3.
+--
+-- Ore loss: ~44% at tier 2, capped 90% at tier 3. Set MaxOreLoss to 1.0 for a
+-- full wipe if partial salvage still reads as too forgiving.
+GameConfig.Hazard = {
+	StartDepth = 120,        -- no damage above this depth
+	Scale = 100,             -- studs per unit of the curve
+	Coefficient = 0.9,       -- damage per second at one Scale below StartDepth
+	Exponent = 1.4,          -- >1 so each tier is worse than proportionally
+	MaxDisplayDamage = 4.0,  -- heat gauge normalises against this
+
+	RegenPerSecond = 6,      -- only applies where the hazard does not reach
+	SafePocketRadius = 22,
+
+	RespawnSeconds = 15,     -- long enough to read the death screen; a button skips it
+
+	MinOreLoss = 0.15,
+	MaxOreLoss = 0.9,
+	OreLossScale = 450,      -- +1% loss per 4.5 studs past StartDepth
+}
+
+-- Cargo securing. Disconnecting while unsecured is treated exactly as dying
+-- at the deepest point reached this trip, reusing Hazard.GetOreLossFraction.
+GameConfig.Cargo = {
+	SecureSeconds = 10,
+}
+
 GameConfig.Elevator = {
 	DescendHoldSeconds = 0.5,
 	AscendHoldSeconds = 3.0,

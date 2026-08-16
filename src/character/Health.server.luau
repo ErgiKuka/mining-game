@@ -1,0 +1,6 @@
+-- Intentionally empty.
+--
+-- This replaces Roblox's default Health script, which regenerates roughly 1%
+-- of max health per second and would cancel out most of the depth hazard.
+-- Regeneration is handled by HazardService instead, so it only happens above
+-- ground where the design wants it.

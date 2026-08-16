@@ -1,4 +1,4 @@
--- Market pricing.
+-- Market pricing, per kilogram.
 --
 -- Prices are a pure function of the clock, not of stored state. Every server
 -- computes the same number for the same 15-minute window with no cross-server
@@ -27,14 +27,13 @@ function Pricing.SecondsRemaining()
 	return Pricing.WindowSeconds - (os.time() % Pricing.WindowSeconds)
 end
 
--- Which ore is in demand this window. Same input on every server, so the
--- announcement is globally consistent without anyone broadcasting it.
 function Pricing.GetEventOreId(window)
 	local rng = Random.new(window * 7919)
 	local index = rng:NextInteger(1, #OreData.Types)
 	return OreData.Types[index].Id
 end
 
+-- Returns price per kilogram.
 function Pricing.GetPrice(oreId, window)
 	local ore = OreData.ById[oreId]
 	if ore == nil then
@@ -43,7 +42,6 @@ function Pricing.GetPrice(oreId, window)
 
 	local currentWindow = window or Pricing.GetWindow()
 
-	-- Seeded per ore per window: deterministic, but uncorrelated between ores.
 	local rng = Random.new(currentWindow * 104729 + string.len(oreId) * 31 + string.byte(oreId, 1))
 	local drift = rng:NextNumber(0, Pricing.MaxDrift)
 
@@ -54,8 +52,13 @@ function Pricing.GetPrice(oreId, window)
 		bonus = Pricing.EventBonus
 	end
 
-	local price = ore.ValuePerUnit * (1 + drift + bonus)
-	return math.max(ore.ValuePerUnit, math.floor(price + 0.5)), isEvent
+	local price = ore.ValuePerKg * (1 + drift + bonus)
+	return math.max(ore.ValuePerKg, price), isEvent
+end
+
+function Pricing.ValueOf(oreId, massKg, window)
+	local price = Pricing.GetPrice(oreId, window)
+	return math.floor(price * massKg + 0.5)
 end
 
 return Pricing

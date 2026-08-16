@@ -1,39 +1,59 @@
--- Server-authoritative carried ore.
+-- Server-authoritative carried ore, measured in kilograms.
 --
--- The client never holds the real inventory; it receives a copy for display
--- only. Every mutation happens here, so a modified client can lie about what
--- it wants but not about what it has.
+-- The inventory IS the weight: {oreId -> kg}. No separate unit count and no
+-- per-item objects, so capacity checks are a sum and saves stay small.
+--
+-- The table lives on the saved profile (DataService), not in a local cache, so
+-- what the player sees and what gets written are the same object.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local OreData = require(ReplicatedStorage.Shared.Data.OreData)
 local GearData = require(ReplicatedStorage.Shared.Data.GearData)
+local DataService = require(script.Parent.DataService)
 
 local InventoryService = {}
 
-local inventories = {}
-local gearByPlayer = {}
+-- Masses are floats; round to grams so display and arithmetic never disagree
+-- by a rounding hair.
+local PRECISION = 1000
 
 local inventoryUpdated = ReplicatedStorage.Remotes.InventoryUpdated
 
-local function ensure(player)
-	if inventories[player] == nil then
-		inventories[player] = {}
+local function round(mass)
+	return math.floor(mass * PRECISION + 0.5) / PRECISION
+end
+
+local EMPTY = {}
+
+function InventoryService.Get(player)
+	local data = DataService.Get(player)
+
+	if data == nil then
+		return EMPTY
 	end
-	return inventories[player]
+
+	return data.Inventory
 end
 
 function InventoryService.GetGear(player)
-	local id = gearByPlayer[player]
-	if id == nil then
-		id = GearData.StartingGearId
+	local data = DataService.Get(player)
+
+	if data == nil then
+		return GearData.Get(GearData.StartingGearId)
 	end
-	return GearData.Get(id)
+
+	return GearData.Get(data.GearId)
 end
 
 function InventoryService.SetGear(player, gearId)
-	gearByPlayer[player] = gearId
+	local data = DataService.Get(player)
+	if data == nil then
+		return
+	end
+
+	data.GearId = gearId
 	InventoryService.Push(player)
 end
 
@@ -44,60 +64,71 @@ end
 function InventoryService.GetWeight(player)
 	local total = 0
 
-	for oreId, units in pairs(ensure(player)) do
-		local ore = OreData.ById[oreId]
-		if ore ~= nil then
-			total = total + ore.WeightKg * units
-		end
+	for _, mass in pairs(InventoryService.Get(player)) do
+		total = total + mass
 	end
 
-	return total
+	return round(total)
 end
 
--- Whole units only; a partial add would silently destroy ore the player
--- believes they earned, which reads as a bug rather than a limit.
-function InventoryService.CanFit(player, oreId, units)
-	local ore = OreData.ById[oreId]
-	if ore == nil then
-		return false
-	end
-
-	local added = ore.WeightKg * units
-	return InventoryService.GetWeight(player) + added <= InventoryService.GetCapacity(player)
+function InventoryService.GetFreeSpace(player)
+	return math.max(0, InventoryService.GetCapacity(player) - InventoryService.GetWeight(player))
 end
 
-function InventoryService.Add(player, oreId, units)
-	if units <= 0 then
-		return false
-	end
-
-	if not InventoryService.CanFit(player, oreId, units) then
-		return false
-	end
-
-	local inv = ensure(player)
-	inv[oreId] = (inv[oreId] or 0) + units
-	InventoryService.Push(player)
-	return true
+function InventoryService.CanFit(player, massKg)
+	return InventoryService.GetFreeSpace(player) >= massKg
 end
 
--- Removes up to `units` and returns how many were actually taken, so callers
--- can price exactly what they received rather than what they asked for.
-function InventoryService.Remove(player, oreId, units)
-	local inv = ensure(player)
-	local held = inv[oreId] or 0
-
-	if held <= 0 or units <= 0 then
+-- Adds up to massKg and returns how much actually fit. Partial adds are
+-- correct here: a 4.7 kg chunk into 2.0 kg of space gives 2.0 kg, which is
+-- what "your bag is nearly full" should mean.
+function InventoryService.Add(player, oreId, massKg)
+	if massKg <= 0 or OreData.ById[oreId] == nil then
 		return 0
 	end
 
-	local taken = math.min(held, units)
-	local left = held - taken
+	local data = DataService.Get(player)
+	if data == nil then
+		return 0
+	end
 
-	if left <= 0 then
-		inv[oreId] = nil
+	local space = InventoryService.GetFreeSpace(player)
+	if space <= 0 then
+		return 0
+	end
+
+	local added = round(math.min(massKg, space))
+	if added <= 0 then
+		return 0
+	end
+
+	data.Inventory[oreId] = round((data.Inventory[oreId] or 0) + added)
+
+	InventoryService.Push(player)
+	return added
+end
+
+-- Removes up to massKg and returns how much was actually taken, so callers
+-- price exactly what they received rather than what they asked for.
+function InventoryService.Remove(player, oreId, massKg)
+	local data = DataService.Get(player)
+	if data == nil then
+		return 0
+	end
+
+	local held = data.Inventory[oreId] or 0
+
+	if held <= 0 or massKg <= 0 then
+		return 0
+	end
+
+	local taken = round(math.min(held, massKg))
+	local left = round(held - taken)
+
+	if left <= 0.0005 then
+		data.Inventory[oreId] = nil
 	else
-		inv[oreId] = left
+		data.Inventory[oreId] = left
 	end
 
 	InventoryService.Push(player)
@@ -105,19 +136,20 @@ function InventoryService.Remove(player, oreId, units)
 end
 
 function InventoryService.Clear(player)
-	inventories[player] = {}
-	InventoryService.Push(player)
-end
+	local data = DataService.Get(player)
+	if data == nil then
+		return
+	end
 
-function InventoryService.Get(player)
-	return ensure(player)
+	data.Inventory = {}
+	InventoryService.Push(player)
 end
 
 function InventoryService.Push(player)
 	local gear = InventoryService.GetGear(player)
 
 	inventoryUpdated:FireClient(player, {
-		Items = ensure(player),
+		Items = InventoryService.Get(player),
 		Weight = InventoryService.GetWeight(player),
 		Capacity = gear.CapacityKg,
 		GearName = gear.DisplayName,
@@ -127,15 +159,8 @@ function InventoryService.Push(player)
 end
 
 function InventoryService.Start()
-	Players.PlayerAdded:Connect(function(player)
-		ensure(player)
-		gearByPlayer[player] = GearData.StartingGearId
+	DataService.OnLoaded(function(player)
 		InventoryService.Push(player)
-	end)
-
-	Players.PlayerRemoving:Connect(function(player)
-		inventories[player] = nil
-		gearByPlayer[player] = nil
 	end)
 
 	print("InventoryService: started.")

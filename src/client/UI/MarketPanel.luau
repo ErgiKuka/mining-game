@@ -32,14 +32,14 @@ local function formatTime(seconds)
 	return string.format("%d:%02d", minutes, rest)
 end
 
-local function makeRow(oreId, units, order, parent)
+local function makeRow(oreId, massKg, order, parent)
 	local ore = OreData.ById[oreId]
 	if ore == nil then
 		return 0
 	end
 
 	local price, isEvent = Pricing.GetPrice(oreId)
-	local lineTotal = price * units
+	local lineTotal = Pricing.ValueOf(oreId, massKg)
 
 	local row = Theme.frame({
 		Parent = parent,
@@ -56,7 +56,7 @@ local function makeRow(oreId, units, order, parent)
 
 	local swatch = Theme.frame({
 		Parent = row,
-		Color = ore.Color,
+		Color = ore.OreColor,
 		Size = UDim2.new(0, 34, 0, 34),
 		Position = UDim2.new(0, 10, 0.5, -17),
 		ZIndex = 5,
@@ -66,7 +66,7 @@ local function makeRow(oreId, units, order, parent)
 
 	Theme.text({
 		Parent = row,
-		Text = ore.DisplayName .. "  x" .. tostring(units),
+		Text = ore.DisplayName .. string.format("   %.1f kg", massKg),
 		Font = Theme.Font.Heading,
 		TextSize = 14,
 		Size = UDim2.new(0, 200, 0, 18),
@@ -74,14 +74,14 @@ local function makeRow(oreId, units, order, parent)
 		ZIndex = 5,
 	})
 
-	local priceText = "$" .. tostring(price) .. " each"
+	local priceText = string.format("$%.1f per kg", price)
 	local priceColor = Theme.Color.TextDim
 
 	if isEvent then
 		priceText = priceText .. "   IN DEMAND"
 		priceColor = Theme.Color.Accent
-	elseif price > ore.ValuePerUnit then
-		priceText = priceText .. "   (base $" .. tostring(ore.ValuePerUnit) .. ")"
+	elseif price > ore.ValuePerKg + 0.05 then
+		priceText = priceText .. string.format("   (base $%d)", ore.ValuePerKg)
 	end
 
 	Theme.text({
@@ -299,18 +299,18 @@ function MarketPanel.Update(payload)
 	end
 
 	local sorted = {}
-	for oreId, units in pairs(payload.Items or {}) do
-		table.insert(sorted, { id = oreId, units = units })
+	for oreId, mass in pairs(payload.Items or {}) do
+		table.insert(sorted, { id = oreId, mass = mass })
 	end
 
 	table.sort(sorted, function(a, b)
-		return Pricing.GetPrice(a.id) * a.units > Pricing.GetPrice(b.id) * b.units
+		return Pricing.ValueOf(a.id, a.mass) > Pricing.ValueOf(b.id, b.mass)
 	end)
 
 	local total = 0
 
 	for index, entry in ipairs(sorted) do
-		total = total + makeRow(entry.id, entry.units, index, list)
+		total = total + makeRow(entry.id, entry.mass, index, list)
 	end
 
 	emptyLabel.Visible = #sorted == 0

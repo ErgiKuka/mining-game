@@ -289,7 +289,7 @@ function Hud.Toast(text, color)
 	end)
 end
 
-function Hud.OreToast(oreId, units, bonus)
+function Hud.OreToast(oreId, massKg, isFinal)
 	local ore = OreData.ById[oreId]
 	local name = oreId
 
@@ -297,10 +297,12 @@ function Hud.OreToast(oreId, units, bonus)
 		name = ore.DisplayName
 	end
 
-	if bonus then
-		Hud.Toast("+" .. tostring(units) .. " " .. name .. "  (bonus)", Theme.Color.Accent)
+	local text = string.format("+%.1f kg %s", massKg, name)
+
+	if isFinal then
+		Hud.Toast(text .. "   chunk!", Theme.Color.Accent)
 	else
-		Hud.Toast("+" .. tostring(units) .. " " .. name, Theme.Color.Success)
+		Hud.Toast(text, Theme.Color.Success)
 	end
 end
 

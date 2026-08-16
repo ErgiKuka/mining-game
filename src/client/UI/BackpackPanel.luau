@@ -19,7 +19,7 @@ local gearName
 local gearStats
 local emptyLabel
 
-local function makeOreRow(oreId, units, order, parent)
+local function makeOreRow(oreId, massKg, order, parent)
 	local ore = OreData.ById[oreId]
 	if ore == nil then
 		return
@@ -37,7 +37,7 @@ local function makeOreRow(oreId, units, order, parent)
 	-- Colour swatch stands in for an icon; ore colours already exist in data.
 	local swatch = Theme.frame({
 		Parent = row,
-		Color = ore.Color,
+		Color = ore.OreColor,
 		Size = UDim2.new(0, 34, 0, 34),
 		Position = UDim2.new(0, 9, 0.5, -17),
 		ZIndex = 5,
@@ -57,7 +57,7 @@ local function makeOreRow(oreId, units, order, parent)
 
 	Theme.text({
 		Parent = row,
-		Text = string.format("%.1f kg each  -  $%d each", ore.WeightKg, ore.ValuePerUnit),
+		Text = "$" .. tostring(ore.ValuePerKg) .. " per kg",
 		TextSize = 12,
 		Color = Theme.Color.TextDim,
 		Size = UDim2.new(0, 200, 0, 16),
@@ -67,35 +67,24 @@ local function makeOreRow(oreId, units, order, parent)
 
 	Theme.text({
 		Parent = row,
-		Text = "x" .. tostring(units),
+		Text = string.format("%.1f kg", massKg),
 		Font = Theme.Font.Number,
 		TextSize = 16,
 		XAlign = Enum.TextXAlignment.Right,
-		Size = UDim2.new(0, 60, 0, 18),
-		Position = UDim2.new(1, -140, 0, 8),
+		Size = UDim2.new(0, 90, 1, 0),
+		Position = UDim2.new(1, -212, 0, 0),
 		ZIndex = 5,
 	})
 
 	Theme.text({
 		Parent = row,
-		Text = string.format("%.1f kg", ore.WeightKg * units),
-		TextSize = 12,
-		Color = Theme.Color.TextDim,
-		XAlign = Enum.TextXAlignment.Right,
-		Size = UDim2.new(0, 60, 0, 16),
-		Position = UDim2.new(1, -140, 0, 27),
-		ZIndex = 5,
-	})
-
-	Theme.text({
-		Parent = row,
-		Text = "$" .. tostring(ore.ValuePerUnit * units),
+		Text = "$" .. tostring(math.floor(ore.ValuePerKg * massKg + 0.5)),
 		Font = Theme.Font.Number,
 		TextSize = 16,
 		Color = Theme.Color.Accent,
 		XAlign = Enum.TextXAlignment.Right,
 		Size = UDim2.new(0, 110, 1, 0),
-		Position = UDim2.new(1, -122, 0, 0),
+		Position = UDim2.new(1, -110, 0, 0),
 		ZIndex = 5,
 	})
 end
@@ -263,8 +252,8 @@ function BackpackPanel.Update(payload)
 	end
 
 	local sorted = {}
-	for oreId, units in pairs(payload.Items or {}) do
-		table.insert(sorted, { id = oreId, units = units })
+	for oreId, mass in pairs(payload.Items or {}) do
+		table.insert(sorted, { id = oreId, mass = mass })
 	end
 
 	table.sort(sorted, function(a, b)
@@ -273,24 +262,24 @@ function BackpackPanel.Update(payload)
 		if oreA == nil or oreB == nil then
 			return a.id < b.id
 		end
-		return oreA.ValuePerUnit * a.units > oreB.ValuePerUnit * b.units
+		return oreA.ValuePerKg * a.mass > oreB.ValuePerKg * b.mass
 	end)
 
 	local totalValue = 0
 
 	for index, entry in ipairs(sorted) do
-		makeOreRow(entry.id, entry.units, index, list)
+		makeOreRow(entry.id, entry.mass, index, list)
 
 		local ore = OreData.ById[entry.id]
 		if ore then
-			totalValue = totalValue + ore.ValuePerUnit * entry.units
+			totalValue = totalValue + ore.ValuePerKg * entry.mass
 		end
 	end
 
 	emptyLabel.Visible = #sorted == 0
 
 	footerWeight.Text = string.format("%.1f / %d kg", payload.Weight or 0, payload.Capacity or 0)
-	footerValue.Text = "$" .. tostring(totalValue)
+	footerValue.Text = "$" .. tostring(math.floor(totalValue + 0.5))
 
 	gearName.Text = payload.GearName or "-"
 

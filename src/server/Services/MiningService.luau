@@ -2,16 +2,14 @@
 --
 -- The client sends INTENT ("I swung at this node"). This service decides
 -- whether that was possible: is it a real node, is it alive, is the player
--- close enough, has their swing cooldown elapsed. Nothing the client sends
--- is trusted, including the timing.
+-- close enough, has their swing cooldown elapsed. Nothing the client sends is
+-- trusted, including the timing.
 --
--- Yield is split: PARTIAL_SHARE of a node's ore is paid out progressively as
--- it is broken, the rest is a bonus on depletion divided by hit contribution.
--- That means a player who arrives for the last swing receives only the share
--- their hits earned, so sniping a nearly-broken node is not worth doing.
---
--- A node is a Model of several parts. Shrinking scales every part's size and
--- pulls it toward the cluster centre, so the whole formation crumbles.
+-- A node holds a rolled mass and breaks in three stages. The first two stages
+-- each drop 15-25% of that mass to whoever landed the breaking hit; the final
+-- break splits everything remaining in proportion to hits landed. So a player
+-- who turns up for the last swing takes only the share their damage earned,
+-- while a solo miner gets the whole final chunk.
 
 local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
@@ -25,8 +23,7 @@ local MiningService = {}
 local TAG_ORE_NODE = "OreNode"
 local MAX_MINE_DISTANCE = 18
 local RESPAWN_SECONDS = 25
-local PARTIAL_SHARE = 0.6
-local MIN_SHRINK = 0.3
+local MIN_SHRINK = 0.28
 
 local mineNodeRemote = ReplicatedStorage.Remotes.MineNode
 local miningFeedback = ReplicatedStorage.Remotes.MiningFeedback
@@ -38,13 +35,13 @@ local function captureShape(node)
 	local origin = node:GetPivot().Position
 	local pieces = {}
 
-	for _, part in ipairs(node:GetDescendants()) do
-		if part:IsA("BasePart") then
+	for _, p in ipairs(node:GetDescendants()) do
+		if p:IsA("BasePart") then
 			table.insert(pieces, {
-				part = part,
-				size = part.Size,
-				offset = part.Position - origin,
-				rotation = part.CFrame - part.CFrame.Position,
+				part = p,
+				size = p.Size,
+				offset = p.Position - origin,
+				rotation = p.CFrame - p.CFrame.Position,
 			})
 		end
 	end
@@ -52,24 +49,49 @@ local function captureShape(node)
 	return origin, pieces
 end
 
+-- Chunk masses are rolled once per node so the same node always breaks into
+-- the same pieces, and the final chunk absorbs the remainder exactly.
+local function rollChunks(massKg, seed)
+	local rng = Random.new(seed)
+	local chunks = {}
+	local used = 0
+
+	for _ = 1, OreData.StageCount - 1 do
+		local share = rng:NextNumber(OreData.StageShareMin, OreData.StageShareMax)
+		local chunk = massKg * share
+		used = used + chunk
+		table.insert(chunks, chunk)
+	end
+
+	table.insert(chunks, math.max(0, massKg - used))
+	return chunks
+end
+
 local function getState(node)
 	local state = nodeState[node]
 
 	if state == nil then
 		local maxHits = node:GetAttribute("MaxHits")
-		if maxHits == nil then
+		local massKg = node:GetAttribute("MassKg")
+
+		if maxHits == nil or massKg == nil then
 			return nil
 		end
 
 		local origin, pieces = captureShape(node)
+		local seed = math.floor(origin.X * 13 + origin.Y * 7 + origin.Z * 3)
 
 		state = {
 			hitsLeft = maxHits,
 			maxHits = maxHits,
+			massKg = massKg,
+			chunks = rollChunks(massKg, seed),
+			stage = 1,
+			hitsPerStage = math.max(1, math.ceil(maxHits / OreData.StageCount)),
 			contributions = {},
-			progress = {},
 			origin = origin,
 			pieces = pieces,
+			emitter = node:FindFirstChild("Debris", true),
 			depleted = false,
 		}
 		nodeState[node] = state
@@ -90,21 +112,43 @@ end
 local function setVisible(state, visible)
 	for _, piece in ipairs(state.pieces) do
 		if piece.part.Parent ~= nil then
-			if visible then
-				piece.part.Transparency = 0
-				piece.part.CanCollide = true
-			else
-				piece.part.Transparency = 1
-				piece.part.CanCollide = false
-			end
+			piece.part.Transparency = if visible then 0 else 1
+			piece.part.CanCollide = visible
 		end
+	end
+end
+
+local function burst(state, count)
+	if state.emitter ~= nil and state.emitter.Parent ~= nil then
+		state.emitter:Emit(count)
+	end
+end
+
+local function award(player, oreId, massKg, isFinal)
+	if massKg <= 0 then
+		return
+	end
+
+	local added = InventoryService.Add(player, oreId, massKg)
+
+	if added > 0 then
+		miningFeedback:FireClient(player, {
+			OreId = oreId,
+			Mass = added,
+			Final = isFinal,
+		})
+	end
+
+	-- Bag filled mid-chunk: say so rather than silently dropping the rest.
+	if added < massKg - 0.001 then
+		miningFeedback:FireClient(player, { Full = true })
 	end
 end
 
 local function resetNode(state)
 	state.hitsLeft = state.maxHits
+	state.stage = 1
 	state.contributions = {}
-	state.progress = {}
 	state.depleted = false
 
 	applyScale(state, 1)
@@ -113,28 +157,20 @@ end
 
 local function depleteNode(node, state, ore)
 	state.depleted = true
+	burst(state, 34)
 	setVisible(state, false)
+
+	local finalChunk = state.chunks[OreData.StageCount] or 0
 
 	local totalHits = 0
 	for _, hits in pairs(state.contributions) do
 		totalHits = totalHits + hits
 	end
 
-	local bonusPool = ore.UnitsPerNode * (1 - PARTIAL_SHARE)
-
-	if totalHits > 0 then
+	if totalHits > 0 and finalChunk > 0 then
 		for player, hits in pairs(state.contributions) do
 			if player.Parent ~= nil then
-				local share = math.floor(bonusPool * (hits / totalHits) + 0.5)
-				if share > 0 then
-					if InventoryService.Add(player, ore.Id, share) then
-						miningFeedback:FireClient(player, {
-							OreId = ore.Id,
-							Units = share,
-							Bonus = true,
-						})
-					end
-				end
+				award(player, ore.Id, finalChunk * (hits / totalHits), true)
 			end
 		end
 	end
@@ -150,33 +186,26 @@ local function applyHit(player, node, state, ore)
 	state.hitsLeft = state.hitsLeft - 1
 	state.contributions[player] = (state.contributions[player] or 0) + 1
 
+	local hitsLanded = state.maxHits - state.hitsLeft
+
 	local remaining = state.hitsLeft / state.maxHits
 	applyScale(state, MIN_SHRINK + (1 - MIN_SHRINK) * remaining)
-
-	-- Progressive payout. Fractions carry between hits so small nodes still
-	-- yield whole units instead of rounding away to nothing.
-	local perHit = (ore.UnitsPerNode * PARTIAL_SHARE) / state.maxHits
-	state.progress[player] = (state.progress[player] or 0) + perHit
-
-	local whole = math.floor(state.progress[player])
-	if whole >= 1 then
-		if InventoryService.Add(player, ore.Id, whole) then
-			state.progress[player] = state.progress[player] - whole
-			miningFeedback:FireClient(player, {
-				OreId = ore.Id,
-				Units = whole,
-				Bonus = false,
-			})
-		end
-	end
+	burst(state, 8)
 
 	if state.hitsLeft <= 0 then
 		depleteNode(node, state, ore)
+		return
+	end
+
+	-- Stage boundary: the player who landed this hit takes the chunk.
+	if state.stage < OreData.StageCount and hitsLanded >= state.stage * state.hitsPerStage then
+		burst(state, 20)
+		award(player, ore.Id, state.chunks[state.stage] or 0, false)
+		state.stage = state.stage + 1
 	end
 end
 
 local function onMineRequest(player, node)
-	-- Guard clauses, cheapest first.
 	if typeof(node) ~= "Instance" then
 		return
 	end
@@ -229,9 +258,9 @@ local function onMineRequest(player, node)
 		return
 	end
 
-	-- Backpack full: the swing is refused entirely rather than damaging the
-	-- node for nothing. The player keeps the rock and gets a clear reason.
-	if not InventoryService.CanFit(player, ore.Id, 1) then
+	-- Full bag refuses the swing outright rather than damaging the node for
+	-- nothing, so the player keeps the rock and gets a clear reason.
+	if InventoryService.GetFreeSpace(player) <= 0 then
 		miningFeedback:FireClient(player, { Full = true })
 		return
 	end
@@ -247,7 +276,6 @@ function MiningService.Start()
 
 		for _, state in pairs(nodeState) do
 			state.contributions[player] = nil
-			state.progress[player] = nil
 		end
 	end)
 

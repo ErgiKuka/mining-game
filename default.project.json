@@ -26,7 +26,12 @@
         "RequestSell": { "$className": "RemoteEvent" },
         "SellResult": { "$className": "RemoteEvent" },
         "RequestBuy": { "$className": "RemoteEvent" },
-        "BuyResult": { "$className": "RemoteEvent" }
+        "BuyResult": { "$className": "RemoteEvent" },
+        "DeathFeedback": { "$className": "RemoteEvent" },
+        "CargoStatus": { "$className": "RemoteEvent" },
+        "RequestNotice": { "$className": "RemoteEvent" },
+        "ShowNotice": { "$className": "RemoteEvent" },
+        "RequestRespawn": { "$className": "RemoteEvent" }
       }
     },
 
@@ -37,6 +42,10 @@
         "Client": {
           "$path": "src/client"
         }
+      },
+      "StarterCharacterScripts": {
+        "$className": "StarterCharacterScripts",
+        "$path": "src/character"
       }
     },
 
